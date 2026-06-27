@@ -35,7 +35,8 @@ namespace DBC {
 /**
  * Value Descriptions
  */
-using ValueDescriptions = std::map<uint32_t, std::string>;
+// 2023-03-02 STW: Replace uint32 by int64 to allow compatibility with int32 DBC files
+using ValueDescriptions = std::map<int64_t, std::string>;
 
 }
 }

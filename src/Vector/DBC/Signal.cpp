@@ -210,8 +210,15 @@ std::ostream & operator<<(std::ostream & os, const Signal & signal) {
     if (signal.receivers.empty())
         os << "Vector__XXX";
     else {
-        for (const auto & receiver : signal.receivers)
-            os << " " << receiver;
+        // 2023-03-22 STW: Add comma for receiver list to fix import errors after export
+        os << " ";
+        for (std::set<std::string>::const_iterator receiver = signal.receivers.begin();
+             receiver != signal.receivers.end(); ++receiver)
+        {
+            if(receiver != signal.receivers.begin())
+                os << ",";
+            os << *receiver;
+        }
     }
     os << endl;
 

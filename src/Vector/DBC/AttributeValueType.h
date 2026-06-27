@@ -78,6 +78,24 @@ struct VECTOR_DBC_EXPORT AttributeValueType {
 
     /** Values of type AttributeValueType::Enum */
     std::vector<std::string> enumValues {};
+
+    // 2023-03-17 STW: Improve enum handling
+    int64_t GetEnumValue(const std::string lookUp) const{
+       int64_t value = 0LL;
+       bool found = false;
+       for(uint32_t itKnown = 0UL; itKnown < this->enumValues.size(); ++itKnown)
+       {
+           if(lookUp == this->enumValues[itKnown])
+           {
+              value = itKnown;
+              found = true;
+              break;
+           }
+       }
+       if(!found)
+          value = std::stoll(lookUp);
+       return value;
+    }
 };
 
 std::ostream & operator<<(std::ostream & os, const AttributeValueType & attributeValueType);

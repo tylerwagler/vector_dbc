@@ -33,9 +33,16 @@ class Network;
 #include <iostream>
 #include <string>
 #include <vector>
+// 2023-03-14 STW: Add interface to allow log entries
+#include <sstream>
 
 #include <Vector/DBC/Network.h>
 #include <Vector/DBC/Scanner.h>
+
+// 2023-03-14 STW: Add interface to allow log entries
+// 2026-06-26: route warnings through the library-local log sink instead of
+// opensyde_core's C_OscLoggingHandler, so this library stays standalone.
+#include <Vector/DBC/LogHandler.h>
 
 #undef yylex
 #define yylex scanner->yylex
@@ -62,11 +69,16 @@ static double stod(const std::string & str)
     // %destructor { delete($$); ($$) = nullptr; } <network>
 
     /* 2 General Definitions */
-%token <std::string> UNSIGNED_INTEGER SIGNED_INTEGER DOUBLE CHAR_STRING DBC_IDENTIFIER
+// 2023-03-15 STW: Add new seperate type for value ranges to avoid mismatch with signed type
+%token <std::string> UNSIGNED_INTEGER MULTIPLEXOR_VALUE_RANGE SIGNED_INTEGER DOUBLE CHAR_STRING DBC_IDENTIFIER
 %type <uint32_t> unsigned_integer
-%type <int32_t> signed_integer
+// 2023-03-15 STW: Remove unused int32 type (replaced by int64 to allow compatibility with int64 DBC files)
+// 2023-03-02 STW: Add int64 type to allow compatibility with int32 DBC files
+%type <int64_t> signed_64_integer
 %type <double> double
 %type <std::string> char_string
+// 2023-03-14 STW: Add new eol type to include EOL exceptions in some checks
+%type <std::string> char_string_eol
 %type <std::vector<std::string>> char_strings
 %type <std::string> dbc_identifier
 
@@ -94,8 +106,10 @@ static double stod(const std::string & str)
 %type <std::string> value_table_name
 
     /* 7.1 Value Descriptions (Value Encodings) */
-%type <std::map<uint32_t, std::string>> value_encoding_descriptions
-%type <std::pair<uint32_t, std::string>> value_encoding_description
+// 2023-03-02 STW: Replace uint32 by int64 to allow compatibility with int32 DBC files
+%type <std::map<int64_t, std::string>> value_encoding_descriptions
+// 2023-03-02 STW: Replace uint32 by int64 to allow compatibility with int32 DBC files
+%type <std::pair<int64_t, std::string>> value_encoding_description
 
     /* 8 Message Definitions */
 %token BO VECTOR_XXX
@@ -185,10 +199,14 @@ static double stod(const std::string & str)
 %type <std::string> multiplexor_switch_name
 %type <std::set<ExtendedMultiplexor::ValueRange>> multiplexor_value_ranges
 %type <ExtendedMultiplexor::ValueRange> multiplexor_value_range
+// 2023-03-15 STW: Add new comma type to include COMMA exceptions in some checks
+%type <ExtendedMultiplexor::ValueRange> multiplexor_value_range_comma
 
     /* Punctuators */
 %token OPEN_BRACKET CLOSE_BRACKET OPEN_PARENTHESIS CLOSE_PARENTHESIS
 %token PLUS MINUS VERTICAL_BAR COLON SEMICOLON ASSIGN COMMA AT
+// 2023-03-21 STW: Combine semicolon and eol check to make eol optional
+%type <std::string> semicolon_with_optional_eol
 
     /* end of line */
 %token EOL
@@ -227,12 +245,21 @@ network
         ;
 
     /* 2 General Definitions */
+// 2023-03-21 STW: Combine semicolon and eol check to make eol optional
+semicolon_with_optional_eol
+        : SEMICOLON { $$ = ""; }
+        | SEMICOLON EOL { $$ = ""; }
+        ;
 unsigned_integer
         : UNSIGNED_INTEGER { $$ = std::stoul($1); }
         ;
-signed_integer
-        : SIGNED_INTEGER { $$ = std::stol($1); }
-        | UNSIGNED_INTEGER { $$ = std::stol($1); }
+// 2023-03-15 STW: Remove unused int32 type (replaced by int64 to allow compatibility with int64 DBC files)
+// 2025-01-07 STW: Added double type (improve parsing of invalid dbc files with float notation for INT type)
+signed_64_integer
+        : DOUBLE { $$ = std::stod($1);
+                   Vector::DBC::LogWarning("DBC parser", "Converted \"" + $1 + "\" to int due to data type restrictions"); }
+        | UNSIGNED_INTEGER { $$ = std::stoll($1); }
+        | SIGNED_INTEGER { $$ = std::stoll($1); }
         ;
 double
         : DOUBLE { $$ = std::stod($1); }
@@ -241,6 +268,11 @@ double
         ;
 char_string
         : CHAR_STRING { $$ = $1; }
+        ;
+// 2023-03-14 STW: Add new eol type to include EOL exceptions in some checks
+char_string_eol
+        : CHAR_STRING EOL { $$ = $1; }
+        | CHAR_STRING { $$ = $1; }
         ;
 char_strings
         : CHAR_STRING { $$ = std::vector<std::string>(); $$.push_back($1); }
@@ -304,8 +336,9 @@ value_tables
         : %empty
         | value_tables value_table { network->valueTables[$value_table.name] = $value_table; }
         ;
+// 2023-03-21 STW: Combine semicolon and eol check to make eol optional
 value_table
-        : VAL_TABLE value_table_name value_encoding_descriptions SEMICOLON EOL {
+        : VAL_TABLE value_table_name value_encoding_descriptions semicolon_with_optional_eol {
               $$ = ValueTable();
               $$.name = $value_table_name;
               $$.valueDescriptions = $value_encoding_descriptions;
@@ -316,12 +349,16 @@ value_table_name
         ;
 
     /* 7.1 Value Descriptions (Value Encodings) */
+// 2023-03-02 STW: Replace uint32 by int64 to allow compatibility with int32 DBC files
 value_encoding_descriptions
-        : %empty { $$ = std::map<uint32_t, std::string>(); }
+        : %empty { $$ = std::map<int64_t, std::string>(); }
         | value_encoding_descriptions value_encoding_description { $$ = $1; $$.insert($2); }
         ;
+// 2023-03-02 STW: Replace uint32 by int64 to allow compatibility with int32 DBC files
+// 2023-03-14 STW: Add new eol type to include EOL exceptions in some checks
 value_encoding_description
-        : unsigned_integer char_string { $$ = std::make_pair($1, $2); }
+        : signed_64_integer char_string_eol { $$ = std::make_pair($1, $2); }
+        | signed_64_integer EOL char_string_eol { $$ = std::make_pair($1, $3); }
         ;
 
     /* 8 Message Definitions */
@@ -451,8 +488,9 @@ signal_extended_value_types
         : %empty
         | signal_extended_value_types signal_extended_value_type
         ;
+// 2023-03-21 STW: Combine semicolon and eol check to make eol optional
 signal_extended_value_type
-        : SIG_VALTYPE message_id signal_name COLON signal_extended_value_type_type SEMICOLON EOL {
+        : SIG_VALTYPE message_id signal_name COLON signal_extended_value_type_type semicolon_with_optional_eol {
               network->messages[$message_id].signals[$signal_name].extendedValueType = $signal_extended_value_type_type;
           }
         ;
@@ -477,8 +515,9 @@ message_transmitters
         : %empty
         | message_transmitters message_transmitter
         ;
+// 2023-03-21 STW: Combine semicolon and eol check to make eol optional
 message_transmitter
-        : BO_TX_BU message_id COLON transmitters SEMICOLON EOL { network->messages[$message_id].transmitters = $transmitters; }
+        : BO_TX_BU message_id COLON transmitters semicolon_with_optional_eol { network->messages[$message_id].transmitters = $transmitters; }
         ;
 transmitters
         : transmitter { $$ = std::set<std::string>(); $$.insert($1); }
@@ -491,8 +530,9 @@ value_descriptions
         | value_descriptions value_descriptions_for_signal
         | value_descriptions value_descriptions_for_env_var
         ;
+// 2023-03-21 STW: Combine semicolon and eol check to make eol optional
 value_descriptions_for_signal
-        : VAL message_id signal_name value_encoding_descriptions SEMICOLON EOL {
+        : VAL message_id signal_name value_encoding_descriptions semicolon_with_optional_eol {
               network->messages[$message_id].signals[$signal_name].valueDescriptions = $value_encoding_descriptions;
           }
         ;
@@ -502,8 +542,9 @@ environment_variables
         : %empty
         | environment_variables environment_variable
         ;
+// 2023-03-21 STW: Combine semicolon and eol check to make eol optional
 environment_variable
-        : EV env_var_name COLON env_var_type OPEN_BRACKET minimum VERTICAL_BAR maximum CLOSE_BRACKET unit initial_value ev_id access_type access_nodes SEMICOLON EOL {
+        : EV env_var_name COLON env_var_type OPEN_BRACKET minimum VERTICAL_BAR maximum CLOSE_BRACKET unit initial_value ev_id access_type access_nodes semicolon_with_optional_eol {
               EnvironmentVariable & environmentVariable = network->environmentVariables[$env_var_name];
               environmentVariable.name = $env_var_name;
               environmentVariable.type = $env_var_type;
@@ -580,19 +621,22 @@ environment_variables_data
         : %empty
         | environment_variables_data environment_variable_data
         ;
+// 2023-03-21 STW: Combine semicolon and eol check to make eol optional
 environment_variable_data
-        : ENVVAR_DATA env_var_name COLON data_size SEMICOLON EOL {
+        : ENVVAR_DATA env_var_name COLON data_size semicolon_with_optional_eol {
               network->environmentVariables[$env_var_name].type = EnvironmentVariable::Type::Data;
               network->environmentVariables[$env_var_name].dataSize = $data_size;
           }
         ;
+// 2023-03-21 STW: Combine semicolon and eol check to make eol optional
 data_size
         : unsigned_integer { $$ = $1; }
         ;
 
     /* 9.1 Environment Variable Value Descriptions */
+// 2023-03-21 STW: Combine semicolon and eol check to make eol optional
 value_descriptions_for_env_var
-        : VAL env_var_name value_encoding_descriptions SEMICOLON EOL {
+        : VAL env_var_name value_encoding_descriptions semicolon_with_optional_eol {
               network->environmentVariables[$env_var_name].valueDescriptions = $value_encoding_descriptions;
           }
         ;
@@ -602,11 +646,12 @@ signal_types
         : %empty
         | signal_types signal_type
         ;
+// 2023-03-21 STW: Combine semicolon and eol check to make eol optional
 signal_type
         : SGTYPE signal_type_name COLON signal_size VERTICAL_BAR byte_order value_type
           OPEN_PARENTHESIS factor COMMA offset CLOSE_PARENTHESIS
           OPEN_BRACKET minimum VERTICAL_BAR maximum CLOSE_BRACKET
-          unit default_value COMMA value_table_name SEMICOLON EOL {
+          unit default_value COMMA value_table_name semicolon_with_optional_eol {
               SignalType & signalType = network->signalTypes[$signal_type_name];
               signalType.name = $signal_type_name;
               signalType.size = $signal_size;
@@ -631,8 +676,9 @@ default_value
 //        : %empty
 //        | signal_type_refs signal_type_ref
 //        ;
+// 2023-03-21 STW: Combine semicolon and eol check to make eol optional
 //signal_type_ref
-//        : SGTYPE message_id signal_name COLON signal_type_name SEMICOLON EOL {
+//        : SGTYPE message_id signal_name COLON signal_type_name semicolon_with_optional_eol {
 //              network->messages[$message_id].signals[$signal_name].type = $signal_type_name;
 //          }
 //        ;
@@ -640,8 +686,9 @@ signal_groups
         : %empty
         | signal_groups signal_group
         ;
+// 2023-03-21 STW: Combine semicolon and eol check to make eol optional
 signal_group
-        : SIG_GROUP message_id signal_group_name repetitions COLON signal_names SEMICOLON EOL {
+        : SIG_GROUP message_id signal_group_name repetitions COLON signal_names semicolon_with_optional_eol {
               SignalGroup & signalGroup = network->messages[$message_id].signalGroups[$signal_group_name];
               signalGroup.messageId = $message_id;
               signalGroup.name = $signal_group_name;
@@ -661,12 +708,13 @@ comments
         : %empty
         | comments comment
         ;
+// 2023-03-21 STW: Combine semicolon and eol check to make eol optional
 comment
-        : CM char_string SEMICOLON EOL { network->comment = $char_string; }
-        | CM BU node_name char_string SEMICOLON EOL { network->nodes[$node_name].comment = $char_string; }
-        | CM BO message_id char_string SEMICOLON EOL { network->messages[$message_id].comment = $char_string; }
-        | CM SG message_id signal_name char_string SEMICOLON EOL { network->messages[$message_id].signals[$signal_name].comment = $char_string; }
-        | CM EV env_var_name char_string SEMICOLON EOL { network->environmentVariables[$env_var_name].comment = $char_string; }
+        : CM char_string semicolon_with_optional_eol { network->comment = $char_string; }
+        | CM BU node_name char_string semicolon_with_optional_eol { network->nodes[$node_name].comment = $char_string; }
+        | CM BO message_id char_string semicolon_with_optional_eol { network->messages[$message_id].comment = $char_string; }
+        | CM SG message_id signal_name char_string semicolon_with_optional_eol { network->messages[$message_id].signals[$signal_name].comment = $char_string; }
+        | CM EV env_var_name char_string semicolon_with_optional_eol { network->environmentVariables[$env_var_name].comment = $char_string; }
         ;
 
     /* 12 User Defined Attribute Definitions */
@@ -676,14 +724,15 @@ attribute_definitions
         : %empty
         | attribute_definitions attribute_definition
         ;
+// 2023-03-21 STW: Combine semicolon and eol check to make eol optional
 attribute_definition
-        : BA_DEF object_type attribute_name attribute_value_type SEMICOLON EOL {
+        : BA_DEF object_type attribute_name attribute_value_type semicolon_with_optional_eol {
               AttributeDefinition & attributeDefinition = network->attributeDefinitions[$attribute_name];
               attributeDefinition.name = $attribute_name;
               attributeDefinition.objectType = $object_type;
               attributeDefinition.valueType = $attribute_value_type;
           }
-        | BA_DEF_REL object_type attribute_name attribute_value_type SEMICOLON EOL {
+        | BA_DEF_REL object_type attribute_name attribute_value_type semicolon_with_optional_eol {
               AttributeDefinition & attributeDefinition = network->attributeDefinitions[$attribute_name];
               attributeDefinition.name = $attribute_name;
               attributeDefinition.objectType = $object_type;
@@ -703,14 +752,15 @@ object_type
 attribute_name
         : char_string { $$ = $1; }
         ;
+// 2023-03-15 STW: Replace int32 by int64 to allow compatibility with int64 DBC files
 attribute_value_type
-        : INT signed_integer signed_integer {
+        : INT signed_64_integer signed_64_integer {
               $$ = AttributeValueType();
               $$.type = AttributeValueType::Type::Int;
               $$.integerValue.minimum = $2;
               $$.integerValue.maximum = $3;
           }
-        | HEX signed_integer signed_integer {
+        | HEX signed_64_integer signed_64_integer {
               $$ = AttributeValueType();
               $$.type = AttributeValueType::Type::Hex;
               $$.hexValue.minimum = $2;
@@ -738,18 +788,21 @@ attribute_defaults
         : %empty
         | attribute_defaults attribute_default
         ;
+// 2023-03-21 STW: Combine semicolon and eol check to make eol optional
 attribute_default
-        : BA_DEF_DEF attribute_name attribute_value SEMICOLON EOL {
+        : BA_DEF_DEF attribute_name attribute_value semicolon_with_optional_eol {
               AttributeDefinition & attributeDefinition = network->attributeDefinitions[$attribute_name];
               Attribute & attributeDefault = network->attributeDefaults[$attribute_name];
               attributeDefault.name = $attribute_name;
               attributeDefault.objectType = attributeDefinition.objectType;
               switch(attributeDefinition.valueType.type) {
               case AttributeValueType::Type::Int:
-                  attributeDefault.integerValue = std::stol($attribute_value);
+                  // 2023-03-15 STW: Replace int32 by int64 to allow compatibility with int64 DBC files
+                  attributeDefault.integerValue = std::stoll($attribute_value);
                   break;
               case AttributeValueType::Type::Hex:
-                  attributeDefault.hexValue = std::stol($attribute_value);
+                  // 2023-03-15 STW: Replace int32 by int64 to allow compatibility with int64 DBC files
+                  attributeDefault.hexValue = std::stoll($attribute_value);
                   break;
               case AttributeValueType::Type::Float:
                   attributeDefault.floatValue = std::stod($attribute_value);
@@ -762,17 +815,19 @@ attribute_default
                   break;
               }
           }
-        | BA_DEF_DEF_REL attribute_name attribute_value SEMICOLON EOL {
+        | BA_DEF_DEF_REL attribute_name attribute_value semicolon_with_optional_eol {
               AttributeDefinition & attributeDefinition = network->attributeDefinitions[$attribute_name];
               Attribute & attributeDefault = network->attributeDefaults[$attribute_name];
               attributeDefault.name = $attribute_name;
               attributeDefault.objectType = attributeDefinition.objectType;
               switch(attributeDefinition.valueType.type) {
               case AttributeValueType::Type::Int:
-                  attributeDefault.integerValue = std::stol($attribute_value);
+                  // 2023-03-15 STW: Replace int32 by int64 to allow compatibility with int64 DBC files
+                  attributeDefault.integerValue = std::stoll($attribute_value);
                   break;
               case AttributeValueType::Type::Hex:
-                  attributeDefault.hexValue = std::stol($attribute_value);
+                  // 2023-03-15 STW: Replace int32 by int64 to allow compatibility with int64 DBC files
+                  attributeDefault.hexValue = std::stoll($attribute_value);
                   break;
               case AttributeValueType::Type::Float:
                   attributeDefault.floatValue = std::stod($attribute_value);
@@ -798,18 +853,21 @@ attribute_values
         : %empty
         | attribute_values attribute_value_for_object
         ;
+// 2023-03-21 STW: Combine semicolon and eol check to make eol optional
 attribute_value_for_object
-        : BA attribute_name attribute_value SEMICOLON EOL {
+        : BA attribute_name attribute_value semicolon_with_optional_eol {
               AttributeDefinition & attributeDefinition = network->attributeDefinitions[$attribute_name];
               Attribute & attribute = network->attributeValues[$attribute_name];
               attribute.name = $attribute_name;
               attribute.objectType = AttributeObjectType::Network;
               switch(attributeDefinition.valueType.type) {
               case AttributeValueType::Type::Int:
-                  attribute.integerValue = std::stol($attribute_value);
+                  // 2023-03-15 STW: Replace int32 by int64 to allow compatibility with int64 DBC files
+                  attribute.integerValue = std::stoll($attribute_value);
                   break;
               case AttributeValueType::Type::Hex:
-                  attribute.hexValue = std::stol($attribute_value);
+                  // 2023-03-15 STW: Replace int32 by int64 to allow compatibility with int64 DBC files
+                  attribute.hexValue = std::stoll($attribute_value);
                   break;
               case AttributeValueType::Type::Float:
                   attribute.floatValue = std::stod($attribute_value);
@@ -818,21 +876,24 @@ attribute_value_for_object
                   attribute.stringValue = $attribute_value;
                   break;
               case AttributeValueType::Type::Enum:
-                  attribute.enumValue = std::stol($attribute_value);
+                  // 2023-03-15 STW: Replace int32 by int64 to allow compatibility with int64 DBC files
+                  attribute.enumValue = std::stoll($attribute_value);
                   break;
               }
           }
-        | BA attribute_name BU node_name attribute_value SEMICOLON EOL {
+        | BA attribute_name BU node_name attribute_value semicolon_with_optional_eol {
               AttributeDefinition & attributeDefinition = network->attributeDefinitions[$attribute_name];
               Attribute & attribute = network->nodes[$node_name].attributeValues[$attribute_name];
               attribute.name = $attribute_name;
               attribute.objectType = AttributeObjectType::Node;
               switch(attributeDefinition.valueType.type) {
               case AttributeValueType::Type::Int:
-                  attribute.integerValue = std::stol($attribute_value);
+                  // 2023-03-15 STW: Replace int32 by int64 to allow compatibility with int64 DBC files
+                  attribute.integerValue = std::stoll($attribute_value);
                   break;
               case AttributeValueType::Type::Hex:
-                  attribute.hexValue = std::stol($attribute_value);
+                  // 2023-03-15 STW: Replace int32 by int64 to allow compatibility with int64 DBC files
+                  attribute.hexValue = std::stoll($attribute_value);
                   break;
               case AttributeValueType::Type::Float:
                   attribute.floatValue = std::stod($attribute_value);
@@ -841,21 +902,24 @@ attribute_value_for_object
                   attribute.stringValue = $attribute_value;
                   break;
               case AttributeValueType::Type::Enum:
-                  attribute.enumValue = std::stol($attribute_value);
+                  // 2023-03-15 STW: Replace int32 by int64 to allow compatibility with int64 DBC files
+                  attribute.enumValue = std::stoll($attribute_value);
                   break;
               }
           }
-        | BA attribute_name BO message_id attribute_value SEMICOLON EOL {
+        | BA attribute_name BO message_id attribute_value semicolon_with_optional_eol {
               AttributeDefinition & attributeDefinition = network->attributeDefinitions[$attribute_name];
               Attribute & attribute = network->messages[$message_id].attributeValues[$attribute_name];
               attribute.name = $attribute_name;
               attribute.objectType = AttributeObjectType::Message;
               switch(attributeDefinition.valueType.type) {
               case AttributeValueType::Type::Int:
-                  attribute.integerValue = std::stol($attribute_value);
+                  // 2023-03-15 STW: Replace int32 by int64 to allow compatibility with int64 DBC files
+                  attribute.integerValue = std::stoll($attribute_value);
                   break;
               case AttributeValueType::Type::Hex:
-                  attribute.hexValue = std::stol($attribute_value);
+                  // 2023-03-15 STW: Replace int32 by int64 to allow compatibility with int64 DBC files
+                  attribute.hexValue = std::stoll($attribute_value);
                   break;
               case AttributeValueType::Type::Float:
                   attribute.floatValue = std::stod($attribute_value);
@@ -864,21 +928,24 @@ attribute_value_for_object
                   attribute.stringValue = $attribute_value;
                   break;
               case AttributeValueType::Type::Enum:
-                  attribute.enumValue = std::stol($attribute_value);
+                  // 2023-03-15 STW: Replace int32 by int64 to allow compatibility with int64 DBC files
+                  attribute.enumValue = std::stoll($attribute_value);
                   break;
               }
           }
-        | BA attribute_name SG message_id signal_name attribute_value SEMICOLON EOL {
+        | BA attribute_name SG message_id signal_name attribute_value semicolon_with_optional_eol {
               AttributeDefinition & attributeDefinition = network->attributeDefinitions[$attribute_name];
               Attribute & attribute = network->messages[$message_id].signals[$signal_name].attributeValues[$attribute_name];
               attribute.name = $attribute_name;
               attribute.objectType = AttributeObjectType::Signal;
               switch(attributeDefinition.valueType.type) {
               case AttributeValueType::Type::Int:
-                  attribute.integerValue = std::stol($attribute_value);
+                  // 2023-03-15 STW: Replace int32 by int64 to allow compatibility with int64 DBC files
+                  attribute.integerValue = std::stoll($attribute_value);
                   break;
               case AttributeValueType::Type::Hex:
-                  attribute.hexValue = std::stol($attribute_value);
+                  // 2023-03-15 STW: Replace int32 by int64 to allow compatibility with int64 DBC files
+                  attribute.hexValue = std::stoll($attribute_value);
                   break;
               case AttributeValueType::Type::Float:
                   attribute.floatValue = std::stod($attribute_value);
@@ -887,21 +954,24 @@ attribute_value_for_object
                   attribute.stringValue = $attribute_value;
                   break;
               case AttributeValueType::Type::Enum:
-                  attribute.enumValue = std::stol($attribute_value);
+                  // 2023-03-17 STW: Improve enum handling
+                  attribute.stringValue = attributeDefinition.valueType.GetEnumValue($attribute_value);
                   break;
               }
           }
-        | BA attribute_name EV env_var_name attribute_value SEMICOLON EOL {
+        | BA attribute_name EV env_var_name attribute_value semicolon_with_optional_eol {
               AttributeDefinition & attributeDefinition = network->attributeDefinitions[$attribute_name];
               Attribute & attribute = network->environmentVariables[$env_var_name].attributeValues[$attribute_name];
               attribute.name = $attribute_name;
               attribute.objectType = AttributeObjectType::EnvironmentVariable;
               switch(attributeDefinition.valueType.type) {
               case AttributeValueType::Type::Int:
-                  attribute.integerValue = std::stol($attribute_value);
+                  // 2023-03-15 STW: Replace int32 by int64 to allow compatibility with int64 DBC files
+                  attribute.integerValue = std::stoll($attribute_value);
                   break;
               case AttributeValueType::Type::Hex:
-                  attribute.hexValue = std::stol($attribute_value);
+                  // 2023-03-15 STW: Replace int32 by int64 to allow compatibility with int64 DBC files
+                  attribute.hexValue = std::stoll($attribute_value);
                   break;
               case AttributeValueType::Type::Float:
                   attribute.floatValue = std::stod($attribute_value);
@@ -910,11 +980,12 @@ attribute_value_for_object
                   attribute.stringValue = $attribute_value;
                   break;
               case AttributeValueType::Type::Enum:
-                  attribute.enumValue = std::stol($attribute_value);
+                  // 2023-03-15 STW: Replace int32 by int64 to allow compatibility with int64 DBC files
+                  attribute.enumValue = std::stoll($attribute_value);
                   break;
               }
           }
-        | BA_REL attribute_name BU_EV_REL node_name env_var_name attribute_value SEMICOLON EOL {
+        | BA_REL attribute_name BU_EV_REL node_name env_var_name attribute_value semicolon_with_optional_eol {
               AttributeDefinition & attributeDefinition = network->attributeDefinitions[$attribute_name];
               AttributeRelation & attributeRelation = network->attributeRelationValues[$attribute_name];
               attributeRelation.name = $attribute_name;
@@ -923,10 +994,12 @@ attribute_value_for_object
               attributeRelation.environmentVariableName = $env_var_name;
               switch(attributeDefinition.valueType.type) {
               case AttributeValueType::Type::Int:
-                  attributeRelation.integerValue = std::stol($attribute_value);
+                  // 2023-03-15 STW: Replace int32 by int64 to allow compatibility with int64 DBC files
+                  attributeRelation.integerValue = std::stoll($attribute_value);
                   break;
               case AttributeValueType::Type::Hex:
-                  attributeRelation.hexValue = std::stol($attribute_value);
+                  // 2023-03-15 STW: Replace int32 by int64 to allow compatibility with int64 DBC files
+                  attributeRelation.hexValue = std::stoll($attribute_value);
                   break;
               case AttributeValueType::Type::Float:
                   attributeRelation.floatValue = std::stod($attribute_value);
@@ -935,11 +1008,12 @@ attribute_value_for_object
                   attributeRelation.stringValue = $attribute_value;
                   break;
               case AttributeValueType::Type::Enum:
-                  attributeRelation.enumValue = std::stol($attribute_value);
+                  // 2023-03-15 STW: Replace int32 by int64 to allow compatibility with int64 DBC files
+                  attributeRelation.enumValue = std::stoll($attribute_value);
                   break;
               }
           }
-        | BA_REL attribute_name BU_BO_REL node_name message_id attribute_value SEMICOLON EOL {
+        | BA_REL attribute_name BU_BO_REL node_name message_id attribute_value semicolon_with_optional_eol {
               AttributeDefinition & attributeDefinition = network->attributeDefinitions[$attribute_name];
               AttributeRelation & attributeRelation = network->attributeRelationValues[$attribute_name];
               attributeRelation.name = $attribute_name;
@@ -948,10 +1022,12 @@ attribute_value_for_object
               attributeRelation.messageId = $message_id;
               switch(attributeDefinition.valueType.type) {
               case AttributeValueType::Type::Int:
-                  attributeRelation.integerValue = std::stol($attribute_value);
+                  // 2023-03-15 STW: Replace int32 by int64 to allow compatibility with int64 DBC files
+                  attributeRelation.integerValue = std::stoll($attribute_value);
                   break;
               case AttributeValueType::Type::Hex:
-                  attributeRelation.hexValue = std::stol($attribute_value);
+                  // 2023-03-15 STW: Replace int32 by int64 to allow compatibility with int64 DBC files
+                  attributeRelation.hexValue = std::stoll($attribute_value);
                   break;
               case AttributeValueType::Type::Float:
                   attributeRelation.floatValue = std::stod($attribute_value);
@@ -960,11 +1036,12 @@ attribute_value_for_object
                   attributeRelation.stringValue = $attribute_value;
                   break;
               case AttributeValueType::Type::Enum:
-                  attributeRelation.enumValue = std::stol($attribute_value);
+                  // 2023-03-15 STW: Replace int32 by int64 to allow compatibility with int64 DBC files
+                  attributeRelation.enumValue = std::stoll($attribute_value);
                   break;
               }
           }
-        | BA_REL attribute_name BU_SG_REL node_name SG message_id signal_name attribute_value SEMICOLON EOL {
+        | BA_REL attribute_name BU_SG_REL node_name SG message_id signal_name attribute_value semicolon_with_optional_eol {
               AttributeDefinition & attributeDefinition = network->attributeDefinitions[$attribute_name];
               AttributeRelation & attributeRelation = network->attributeRelationValues[$attribute_name];
               attributeRelation.name = $attribute_name;
@@ -974,10 +1051,12 @@ attribute_value_for_object
               attributeRelation.signalName = $signal_name;
               switch(attributeDefinition.valueType.type) {
               case AttributeValueType::Type::Int:
-                  attributeRelation.integerValue = std::stol($attribute_value);
+                  // 2023-03-15 STW: Replace int32 by int64 to allow compatibility with int64 DBC files
+                  attributeRelation.integerValue = std::stoll($attribute_value);
                   break;
               case AttributeValueType::Type::Hex:
-                  attributeRelation.hexValue = std::stol($attribute_value);
+                  // 2023-03-15 STW: Replace int32 by int64 to allow compatibility with int64 DBC files
+                  attributeRelation.hexValue = std::stoll($attribute_value);
                   break;
               case AttributeValueType::Type::Float:
                   attributeRelation.floatValue = std::stod($attribute_value);
@@ -986,7 +1065,8 @@ attribute_value_for_object
                   attributeRelation.stringValue = $attribute_value;
                   break;
               case AttributeValueType::Type::Enum:
-                  attributeRelation.enumValue = std::stol($attribute_value);
+                  // 2023-03-15 STW: Replace int32 by int64 to allow compatibility with int64 DBC files
+                  attributeRelation.enumValue = std::stoll($attribute_value);
                   break;
               }
           }
@@ -997,8 +1077,9 @@ extended_multiplexing
         : %empty
         | extended_multiplexing multiplexed_signal
         ;
+// 2023-03-21 STW: Combine semicolon and eol check to make eol optional
 multiplexed_signal
-        : SG_MUL_VAL message_id multiplexed_signal_name multiplexor_switch_name multiplexor_value_ranges SEMICOLON EOL {
+        : SG_MUL_VAL message_id multiplexed_signal_name multiplexor_switch_name multiplexor_value_ranges semicolon_with_optional_eol {
               ExtendedMultiplexor & extendedMultiplexor = network->messages[$message_id].signals[$multiplexed_signal_name].extendedMultiplexors[$multiplexor_switch_name];
               extendedMultiplexor.switchName = $multiplexor_switch_name;
               extendedMultiplexor.valueRanges = $multiplexor_value_ranges;
@@ -1010,17 +1091,35 @@ multiplexed_signal_name
 multiplexor_switch_name
         : dbc_identifier { $$ = $1; }
         ;
+// 2023-03-15 STW: Add new comma type to include COMMA exceptions in some checks
 multiplexor_value_ranges
         : %empty { $$ = std::set<ExtendedMultiplexor::ValueRange>(); }
-        | multiplexor_value_ranges multiplexor_value_range { $$ = $1; $$.insert($2); }
+        | multiplexor_value_ranges multiplexor_value_range_comma { $$ = $1; $$.insert($2); }
         ;
+// 2023-03-15 STW: Add new comma type to include COMMA exceptions in some checks
+multiplexor_value_range_comma
+        : multiplexor_value_range COMMA { $$ = $1; }
+        | multiplexor_value_range { $$ = $1; }
+        ;
+// 2023-03-15 STW: Add new seperate type for value ranges to avoid mismatch with signed type
 multiplexor_value_range
-        : unsigned_integer MINUS unsigned_integer { $$ = std::make_pair($1, $3); }
+        : MULTIPLEXOR_VALUE_RANGE { 
+        const std::string complete = $1; 
+        const std::string token1_str = complete.substr(0, complete.find("-")); 
+        const std::string token2_str = complete.substr(token1_str.size() + 1, complete.size() - (token1_str.size() + 1)); 
+        const uint32_t token1_int = std::stoul(token1_str);
+        const uint32_t token2_int = std::stoul(token2_str);
+        $$ = std::make_pair(token1_int, token2_int); 
+        }
         ;
 
 %%
 
 void Vector::DBC::Parser::error(const location_type & location, const std::string & message)
 {
-    std::cerr << "Parse error at " << location << ": " << message << std::endl;
+    // 2023-03-14 STW: Add interface to allow log entries
+    std::stringstream stream;
+    stream << location;
+    std::string log_entry = "Parse error at " + stream.str() + ": " + message;
+    Vector::DBC::LogWarning("DBC parser", log_entry);
 }

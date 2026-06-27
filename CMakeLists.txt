@@ -26,8 +26,11 @@ include(GNUInstallDirs)
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules")
 
 # dependencies
-find_package(FLEX REQUIRED)
-find_package(BISON 3.3 REQUIRED)
+# flex/bison are optional: pre-generated Scanner.cpp/Parser.cpp are checked in so the
+# library builds without a flex/bison toolchain (e.g. openSYDE/Windows). When both are
+# present the parser is regenerated from Scanner.ll/Parser.yy instead. See src/Vector/DBC.
+find_package(FLEX)
+find_package(BISON 3.3)
 if(OPTION_RUN_DOXYGEN)
     find_package(Doxygen REQUIRED)
     find_package(Graphviz)

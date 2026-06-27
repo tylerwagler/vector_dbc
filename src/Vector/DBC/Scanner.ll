@@ -195,6 +195,9 @@ EXPONENT_PART           ([Ee][+-]?{DIGIT}+)
     /* 2 General Definitions */
 {DIGIT}+ {
     return Vector::DBC::Parser::make_UNSIGNED_INTEGER(yytext, loc); }
+    /* 2023-03-15 STW: Add new seperate type for value ranges to avoid mismatch with signed type */
+{DIGIT}+[-]{DIGIT}+ {
+    return Vector::DBC::Parser::make_MULTIPLEXOR_VALUE_RANGE(yytext, loc); }
 [-+]?{DIGIT}+ {
     return Vector::DBC::Parser::make_SIGNED_INTEGER(yytext, loc); }
 [-+]?{DIGIT}*"."?{DIGIT}+{EXPONENT_PART}? {
@@ -204,7 +207,8 @@ EXPONENT_PART           ([Ee][+-]?{DIGIT}+)
     str.erase(0, 1);
     str.erase(str.size() - 1);
     return Vector::DBC::Parser::make_CHAR_STRING(str, loc); }
-{NONDIGIT}({NONDIGIT}|{DIGIT})* {
+    /* 2023-03-23 STW: Alow digit start to properly handle variable names starting with a digit */
+({NONDIGIT}|{DIGIT})+ {
     return Vector::DBC::Parser::make_DBC_IDENTIFIER(yytext, loc); }
 
     /* comments */

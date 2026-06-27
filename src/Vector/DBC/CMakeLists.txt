@@ -2,7 +2,9 @@
 include(GenerateExportHeader)
 
 # targets
-add_library(${PROJECT_NAME} SHARED "")
+# Honor BUILD_SHARED_LIBS instead of forcing SHARED, so consumers that build static
+# (e.g. openSYDE sets BUILD_SHARED_LIBS OFF) statically link this library.
+add_library(${PROJECT_NAME} "")
 
 # search paths
 include_directories(
@@ -32,8 +34,10 @@ target_sources(${PROJECT_NAME}
         ${CMAKE_CURRENT_SOURCE_DIR}/ValueDescriptions.h
         ${CMAKE_CURRENT_SOURCE_DIR}/ValueTable.h
         ${CMAKE_CURRENT_SOURCE_DIR}/ValueType.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/LogHandler.h
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/AttributeDefinition.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/LogHandler.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/AttributeRelation.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/AttributeValueType.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/BitTiming.cpp
@@ -49,15 +53,31 @@ target_sources(${PROJECT_NAME}
 # generated files
 configure_file(${PROJECT_NAME}.pc.in ${PROJECT_NAME}.pc @ONLY)
 generate_export_header(${PROJECT_NAME})
-flex_target(Scanner Scanner.ll ${CMAKE_CURRENT_BINARY_DIR}/Scanner.cpp
-    COMPILE_FLAGS --never-interactive)
-bison_target(Parser Parser.yy ${CMAKE_CURRENT_BINARY_DIR}/Parser.cpp
-    VERBOSE)
-add_flex_bison_dependency(Scanner Parser)
-target_sources(${PROJECT_NAME}
-    PRIVATE
-        ${FLEX_Scanner_OUTPUTS}
-        ${BISON_Parser_OUTPUTS})
+
+# Parser/Scanner are generated from Parser.yy / Scanner.ll. Pre-generated copies are
+# checked into this directory so the library builds with no flex/bison toolchain. When
+# both tools are available we regenerate (into the build tree) so grammar edits take
+# effect automatically; otherwise the committed sources are compiled as-is.
+# NOTE: if you edit Parser.yy or Scanner.ll without flex/bison installed, re-run them
+# manually and commit the refreshed Scanner.cpp/Parser.cpp/Parser.hpp/location.hh/etc.
+if(FLEX_FOUND AND BISON_FOUND)
+    flex_target(Scanner Scanner.ll ${CMAKE_CURRENT_BINARY_DIR}/Scanner.cpp
+        COMPILE_FLAGS --never-interactive)
+    bison_target(Parser Parser.yy ${CMAKE_CURRENT_BINARY_DIR}/Parser.cpp
+        VERBOSE)
+    add_flex_bison_dependency(Scanner Parser)
+    target_sources(${PROJECT_NAME}
+        PRIVATE
+            ${FLEX_Scanner_OUTPUTS}
+            ${BISON_Parser_OUTPUTS})
+    target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+else()
+    target_sources(${PROJECT_NAME}
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/Scanner.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/Parser.cpp)
+    target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+endif()
 
 # compiler/linker settings
 set_target_properties(${PROJECT_NAME} PROPERTIES

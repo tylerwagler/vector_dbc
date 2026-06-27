@@ -21,4 +21,4 @@
 
 #include "platform.h"
 
-const std::string endl = "\r\n";
+const std::string endl = "\n";

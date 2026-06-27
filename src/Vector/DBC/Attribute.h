@@ -48,10 +48,12 @@ struct VECTOR_DBC_EXPORT Attribute {
 
     union {
         /** Integer Value of type AttributeValueType::Int */
-        int32_t integerValue {};
+        // 2023-03-15 STW: Replace int32 by int64 to allow compatibility with int64 DBC files
+        int64_t integerValue {};
 
         /** Hex Value of type AttributeValueType::Hex */
-        int32_t hexValue;
+        // 2023-03-15 STW: Replace int32 by int64 to allow compatibility with int64 DBC files
+        int64_t hexValue;
 
         /** Float Value of type AttributeValueType::Float */
         double floatValue;
@@ -59,7 +61,8 @@ struct VECTOR_DBC_EXPORT Attribute {
         // std::string doesn't work in a union, so it's below
 
         /** Enum Value of type AttributeValueType::Enum (used only for BA enums) */
-        int32_t enumValue;
+        // 2023-03-15 STW: Replace int32 by int64 to allow compatibility with int64 DBC files
+        int64_t enumValue;
     };
 
     /** String Value of type AttributeValueType::String (used only for BA_DEF_DEF enums) */
