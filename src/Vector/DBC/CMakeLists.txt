@@ -69,7 +69,7 @@ target_sources(${PROJECT_NAME}
 # compiler/linker settings
 set_target_properties(${PROJECT_NAME} PROPERTIES
     CXX_EXTENSIONS OFF
-    CXX_STANDARD 14
+    CXX_STANDARD 23
     CXX_STANDARD_REQUIRED ON
     CXX_VISIBILITY_PRESET "hidden"
     SOVERSION ${PROJECT_VERSION_MAJOR}
